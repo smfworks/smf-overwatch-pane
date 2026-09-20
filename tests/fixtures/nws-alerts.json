@@ -1,0 +1,44 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "urn:oid:2.49.0.1.840.alert.demo.1",
+      "properties": {
+        "event": "Tornado Warning",
+        "headline": "Tornado Warning for Demo County",
+        "areaDesc": "Demo County"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-90.0, 35.0],
+            [-89.0, 35.0],
+            [-89.0, 36.0],
+            [-90.0, 36.0],
+            [-90.0, 35.0]
+          ]
+        ]
+      }
+    },
+    {
+      "id": "urn:oid:2.49.0.1.840.alert.nogeom",
+      "properties": {
+        "event": "Winter Storm Watch",
+        "areaDesc": "Somewhere"
+      },
+      "geometry": null
+    },
+    {
+      "id": "urn:oid:2.49.0.1.840.alert.point",
+      "properties": {
+        "event": "Special Weather Statement",
+        "areaDesc": "Harbor"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-80.13, 25.77]
+      }
+    }
+  ]
+}

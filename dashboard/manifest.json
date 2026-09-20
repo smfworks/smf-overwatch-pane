@@ -1,0 +1,12 @@
+{
+  "name": "smf-overwatch-pane",
+  "label": "Overwatch",
+  "description": "Omarchy Overwatch live-layer status (USGS, EONET, ADS-B, NWS, AIS, FIRMS) in a right-of-chat pane.",
+  "icon": "Globe",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/overwatch",
+    "position": "after:artifacts"
+  },
+  "api": "plugin_api.py"
+}
