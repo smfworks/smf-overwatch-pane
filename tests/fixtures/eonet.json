@@ -1,0 +1,29 @@
+{
+  "events": [
+    {
+      "id": "EONET_111",
+      "title": "Wildfire - Example Ridge",
+      "geometry": [
+        { "coordinates": [-120.0, 36.0], "date": "2026-09-18T00:00:00Z" },
+        { "coordinates": [-120.1, 36.7], "date": "2026-09-19T12:00:00Z" }
+      ]
+    },
+    {
+      "id": "EONET_nested",
+      "title": "Storm - Nested coords",
+      "geometry": [
+        { "coordinates": [[45.1, 12.5]], "date": "2026-09-19T01:00:00Z" }
+      ]
+    },
+    {
+      "id": "EONET_nogeom",
+      "title": "Unlocated event",
+      "geometry": []
+    },
+    {
+      "id": "EONET_bad",
+      "title": "Out of range",
+      "geometry": [{ "coordinates": [10, 99], "date": "2026-09-19T00:00:00Z" }]
+    }
+  ]
+}
