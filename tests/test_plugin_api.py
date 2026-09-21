@@ -681,6 +681,7 @@ def test_desktop_plugin_registers_palette_and_right_pane():
     js = (ROOT / "desktop" / "plugin.js").read_text(encoding="utf-8")
     assert "PANES_AREA" in js
     assert "placement: 'right'" in js
+    assert "width: '760px'" in js
     assert "Open Overwatch HUD" in js
     assert "Open Overwatch pane" in js
     assert "http://127.0.0.1:4173/" in js
@@ -691,6 +692,7 @@ def test_desktop_plugin_registers_palette_and_right_pane():
     assert "Backend not reachable" in js
     assert "Quit Hermes Desktop" in js
     assert "Reload desktop plugins" in js
+    assert "profiles/<name>/plugins" in js
     assert "reachableUrl || preview" not in js
     assert "identified" in js
     assert "omarchy-overwatch.cases.v1" in js
@@ -698,3 +700,34 @@ def test_desktop_plugin_registers_palette_and_right_pane():
     assert "name: smf-overwatch-pane" in yaml
     assert "author: SMF Works" in yaml
     assert "kind: standalone" in yaml
+
+
+def test_desktop_plugin_iframes_identified_hud_without_plugin_api():
+    """The pane embeds the HUD the way AIGC Studio iframes a local URL.
+
+    /layers failure stays a badge. The iframe src is only a title-verified
+    :4173 or :5173 URL — never a raw port, and never the unmounted ErrorState.
+    """
+    js = (ROOT / "desktop" / "plugin.js").read_text(encoding="utf-8")
+    assert "function HudFrame" in js
+    assert "id: 'smf-overwatch-pane-frame'" in js
+    assert "sandbox: IFRAME_SANDBOX" in js
+    assert (
+        "allow-scripts allow-same-origin allow-forms allow-popups allow-downloads allow-modals"
+        in js
+    )
+    assert "src: url" in js
+    assert "src: HUD_PREVIEW" not in js
+    assert "src: HUD_DEV" not in js
+    assert "enabled: !apiChecked" in js
+    assert "verifiedHudUrl(hud)" in js
+    assert "function BackendBadge" in js
+    assert "The HUD iframe does not need that API" in js
+    pane = js.split("function OverwatchPane", 1)[1].split("function StatusChipHost", 1)[0]
+    assert "jsx(HudFrame" in pane
+    assert "jsx(BackendBadge" in pane
+    assert "ErrorState" not in pane
+    assert "Loading Overwatch layers" not in js
+    # Identity gate stays in front of the frame. A pack-builder title must not match.
+    assert "function htmlIdentifiesAsOverwatch" in js
+    assert "if (url !== HUD_PREVIEW && url !== HUD_DEV) return null" in js

@@ -1,6 +1,8 @@
 /**
- * SMF Overwatch pane — Omarchy Overwatch live-layer status in a right-of-chat column.
+ * SMF Overwatch pane — embed the Overwatch HUD beside chat.
  * Disk plugin: jsx/jsxs only. Never invent layer points or case notes.
+ * The iframe follows the same local-URL path as AIGC Studio and does not
+ * need plugin_api.py. /layers is a secondary strip when that API is mounted.
  */
 import {
   Badge,
@@ -12,6 +14,7 @@ import {
   ScrollArea,
   Separator,
   StatusDot,
+  atom,
   cn,
   fmtDateTime,
   haptic,
@@ -24,6 +27,7 @@ import {
   relativeTime,
   useQuery,
   useQueryClient,
+  useValue,
 } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
@@ -37,8 +41,22 @@ const GITHUB_URL = 'https://github.com/smfworks/omarchy-overwatch'
 const CASES_KEY = 'omarchy-overwatch.cases.v1'
 /** HTML <title> must contain this product string (Overwatch OSINT). */
 const HUD_IDENTITY = 'overwatch osint'
+/** Same shape as the AIGC Studio pane, plus allow-modals for HUD dialogs. */
+const IFRAME_SANDBOX =
+  'allow-scripts allow-same-origin allow-forms allow-popups allow-downloads allow-modals'
 const UNMOUNTED_COPY =
-  'Quit Hermes Desktop and relaunch from the menu so plugin_api.py mounts and /layers can load. ⌘K → Reload desktop plugins is JavaScript only — it does not remount the Python API. No layer points were invented.'
+  'Quit Hermes Desktop and relaunch from the menu so plugin_api.py mounts and /layers can load. The HUD iframe does not need that API. Python /layers mounts only for the profile whose HERMES_HOME/profiles/<name>/plugins contains smf-overwatch-pane. ⌘K → Reload desktop plugins is JavaScript only — it does not remount the Python API. No layer points were invented.'
+
+const $iframeFailedUrl = atom('')
+const $iframeNonce = atom(0)
+const $layersOpen = atom(false)
+let iframeNonce = 0
+
+function remountFrame() {
+  iframeNonce += 1
+  $iframeFailedUrl.set('')
+  $iframeNonce.set(iframeNonce)
+}
 
 const HUD = {
   cyan: '#3ee0c8',
@@ -360,9 +378,35 @@ function LayerRow({ layer }) {
   })
 }
 
+function BackendBadge({ unmounted, detail }) {
+  const label = unmounted ? 'Backend not reachable' : 'Layers unread'
+  const tip = unmounted ? UNMOUNTED_COPY : detail || label
+  return jsx('span', {
+    title: tip,
+    className: 'inline-flex max-w-[16rem]',
+    children: jsx(Badge, {
+      className: 'truncate text-[0.625rem]',
+      children: label,
+    }),
+  })
+}
+
+function SummaryChips({ summary }) {
+  if (!summary) return null
+  return jsxs('div', {
+    className: 'flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.6875rem] text-(--ui-text-tertiary)',
+    children: [
+      jsxs('span', { className: 'inline-flex items-center gap-1', children: [jsx(HudDot, { status: 'live' }), `${summary.live || 0} LIVE`] }),
+      jsxs('span', { className: 'inline-flex items-center gap-1', children: [jsx(HudDot, { status: 'stale' }), `${summary.stale || 0} STALE`] }),
+      jsxs('span', { className: 'inline-flex items-center gap-1', children: [jsx(HudDot, { status: 'err' }), `${summary.err || 0} ERR`] }),
+      jsxs('span', { className: 'inline-flex items-center gap-1', children: [jsx(HudDot, { status: 'off' }), `${summary.off || 0} OFF`] }),
+    ],
+  })
+}
+
 function HudHeader({ data, hud, isFetching, onRefresh }) {
   const resolved = hud || (data && data.hud) || emptyLayers().hud
-  const summary = (data && data.summary) || emptyLayers().summary
+  const summary = data && data.summary
   const reachable = resolved.reachable
   return jsxs('div', {
     className: 'flex flex-col gap-2 px-4 pt-4',
@@ -398,18 +442,52 @@ function HudHeader({ data, hud, isFetching, onRefresh }) {
       jsx('div', {
         className: 'text-[0.6875rem] leading-relaxed text-(--ui-text-tertiary)',
         children:
-          'Status pane for public Overwatch layers beside chat. It complements the Overwatch HUD webapp and does not replace the globe. It is not AIGC Studio. It does not invent tracks.',
+          'The pane embeds the Overwatch HUD when :4173 or :5173 titles as Overwatch OSINT. Layer chips are a secondary strip and need plugin_api.py. This is not AIGC Studio. It does not invent tracks.',
       }),
-      jsxs('div', {
-        className: 'flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.6875rem] text-(--ui-text-tertiary)',
-        children: [
-          jsxs('span', { className: 'inline-flex items-center gap-1', children: [jsx(HudDot, { status: 'live' }), `${summary.live || 0} LIVE`] }),
-          jsxs('span', { className: 'inline-flex items-center gap-1', children: [jsx(HudDot, { status: 'stale' }), `${summary.stale || 0} STALE`] }),
-          jsxs('span', { className: 'inline-flex items-center gap-1', children: [jsx(HudDot, { status: 'err' }), `${summary.err || 0} ERR`] }),
-          jsxs('span', { className: 'inline-flex items-center gap-1', children: [jsx(HudDot, { status: 'off' }), `${summary.off || 0} OFF`] }),
-        ],
-      }),
+      jsx(SummaryChips, { summary }),
     ],
+  })
+}
+
+function HudFrame({ url }) {
+  const failedUrl = useValue($iframeFailedUrl)
+  const nonce = useValue($iframeNonce)
+  if (url !== HUD_PREVIEW && url !== HUD_DEV) return null
+  if (failedUrl === url) {
+    return jsxs('div', {
+      className: 'flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6',
+      children: [
+        jsx(ErrorState, {
+          title: 'Could not load the Overwatch HUD',
+          description:
+            'The iframe did not load ' +
+            url +
+            '. Layer points were not invented. The page was identified as Overwatch OSINT before embed.',
+        }),
+        jsx(Button, {
+          variant: 'ghost',
+          size: 'sm',
+          onClick: () => {
+            haptic('tap')
+            remountFrame()
+          },
+          children: 'Retry',
+        }),
+      ],
+    })
+  }
+  return jsx('iframe', {
+    key: String(nonce) + ':' + url,
+    id: 'smf-overwatch-pane-frame',
+    src: url,
+    title: 'Overwatch OSINT',
+    className: 'min-h-0 w-full flex-1 border-0 bg-black',
+    sandbox: IFRAME_SANDBOX,
+    allow: 'clipboard-read; clipboard-write',
+    referrerPolicy: 'no-referrer',
+    onError: () => {
+      $iframeFailedUrl.set(url)
+    },
   })
 }
 
@@ -417,9 +495,9 @@ function DistinctionNote() {
   return jsx('div', {
     className: 'text-[0.6875rem] leading-relaxed text-(--ui-text-tertiary)',
     children:
-      'This column is the status pane. The Overwatch HUD is a separate webapp — open it only when :4173 or :5173 returns a page titled Overwatch OSINT. AIGC Studio (' +
+      'This pane iframes the Overwatch HUD only when :4173 or :5173 returns a page titled Overwatch OSINT. AIGC Studio (' +
       AIGC_STUDIO +
-      ') and the AIGC pack builder are different apps. A pack builder on :5173 is not the HUD.',
+      ') and the AIGC pack builder are different apps. A pack builder or sparkDash on :5173 is not the HUD. /layers needs the plugin in that profile; the iframe does not.',
   })
 }
 
@@ -505,8 +583,113 @@ function CasesTip({ hud }) {
   })
 }
 
+function LayersStrip({ visible }) {
+  return jsx(ScrollArea, {
+    className: 'max-h-52 min-h-0 shrink-0 border-b border-(--ui-stroke-secondary)',
+    children: jsx('div', {
+      className: 'flex flex-col gap-2 px-3 py-2',
+      children: visible.map((layer) => jsx(LayerRow, { layer }, layer.id)),
+    }),
+  })
+}
+
+function EmbedChrome({
+  embedUrl,
+  summary,
+  layersProblem,
+  unmounted,
+  detail,
+  isFetching,
+  canToggleLayers,
+  onRefresh,
+  onRetry,
+}) {
+  const layersOpen = useValue($layersOpen)
+  return jsxs('div', {
+    className: 'flex shrink-0 flex-col gap-1.5 px-3 py-2',
+    children: [
+      jsxs('div', {
+        className: 'flex items-center gap-2',
+        children: [
+          jsx(Codicon, { name: 'globe', size: 16 }),
+          jsx('div', {
+            className: 'min-w-0 truncate text-sm font-medium tracking-[0.12em]',
+            style: { color: HUD.cyan },
+            children: 'OVERWATCH',
+          }),
+          jsx(Badge, { className: 'shrink-0 text-[0.625rem]', children: 'HUD' }),
+          layersProblem
+            ? jsx(BackendBadge, { unmounted, detail })
+            : null,
+          jsx('div', { className: 'min-w-0 flex-1' }),
+          isFetching
+            ? jsx('span', { className: 'text-[0.625rem] text-(--ui-text-quaternary)', children: 'updating' })
+            : null,
+          canToggleLayers
+            ? jsx(Button, {
+                variant: 'ghost',
+                size: 'sm',
+                onClick: () => {
+                  haptic('tap')
+                  $layersOpen.set(!layersOpen)
+                },
+                children: layersOpen ? 'Hide layers' : 'Layers',
+              })
+            : null,
+          jsx(Button, {
+            variant: 'ghost',
+            size: 'sm',
+            onClick: () => {
+              haptic('tap')
+              openExternal(embedUrl)
+            },
+            children: jsxs('span', {
+              className: 'inline-flex items-center gap-1.5',
+              children: [jsx(Codicon, { name: 'link-external', size: 14 }), 'Open'],
+            }),
+          }),
+          jsx(Button, {
+            variant: 'ghost',
+            size: 'sm',
+            onClick: () => {
+              haptic('tap')
+              if (layersProblem) onRetry()
+              else onRefresh()
+            },
+            children: layersProblem ? 'Retry' : 'Refresh',
+          }),
+        ],
+      }),
+      summary ? jsx(SummaryChips, { summary }) : null,
+      layersProblem
+        ? jsx('div', {
+            className: 'truncate text-[0.625rem] text-(--ui-text-tertiary)',
+            title: unmounted ? UNMOUNTED_COPY : detail,
+            children: unmounted
+              ? 'Quit and relaunch Hermes for /layers. The HUD embed does not need plugin_api.'
+              : detail,
+          })
+        : null,
+    ],
+  })
+}
+
+function CheckingHud({ label }) {
+  return jsxs('div', {
+    className: 'flex flex-1 flex-col items-center justify-center gap-3',
+    children: [
+      jsx(GlyphSpinner, { size: 24 }),
+      jsx('div', {
+        className: 'px-6 text-center text-sm text-(--ui-text-secondary)',
+        children: label,
+      }),
+    ],
+  })
+}
+
 function OverwatchPane({ ctx }) {
   const queryClient = useQueryClient()
+  const layersOpen = useValue($layersOpen)
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: [ID, 'layers'],
     queryFn: () => fetchLayers(ctx, false),
@@ -516,102 +699,135 @@ function OverwatchPane({ ctx }) {
   })
   const apiHud = data && data.hud
   const apiChecked = Boolean(apiHud && typeof apiHud.identified === 'boolean')
-  const needsClientProbe = !isLoading && !apiChecked
+  // Identity probe is independent of plugin_api. Do not wait for /layers.
   const clientProbe = useQuery({
     queryKey: [ID, 'hud-identity'],
     queryFn: async () => ({ url: (await probeHudIdentity()) || '' }),
-    enabled: needsClientProbe,
+    enabled: !apiChecked,
     staleTime: 30 * 1000,
     retry: 0,
   })
   const clientPayload =
     clientProbe.data && typeof clientProbe.data.url === 'string' ? clientProbe.data : null
   const clientUrl = clientPayload && clientPayload.url ? clientPayload.url : null
-  const checkingHud = Boolean(
-    needsClientProbe &&
-      !clientPayload &&
-      (clientProbe.isFetching || clientProbe.isLoading)
-  )
-  const clientSettled = Boolean(needsClientProbe && clientPayload && !clientProbe.isFetching)
+  const clientFailed = Boolean(clientProbe.isError || clientProbe.error)
+  const clientSettled = Boolean(!apiChecked && (clientPayload || clientFailed))
+  const checkingHud = Boolean(!apiChecked && !clientSettled)
   const hud = resolveHud(apiHud, clientUrl, clientSettled)
+  const embedUrl = verifiedHudUrl(hud)
   const retryAll = () => {
     void refetch()
     if (typeof clientProbe.refetch === 'function') void clientProbe.refetch()
+    remountFrame()
+  }
+  const refreshLayers = () => {
+    fetchLayers(ctx, true)
+      .then((fresh) => {
+        queryClient.setQueryData([ID, 'layers'], fresh)
+      })
+      .catch(() => {
+        void refetch()
+      })
   }
   const layers = asLayers(data)
   const unread = Boolean(error && !data) || isUnread(data)
   const ordered = LAYER_ORDER.map((id) => layers.find((row) => row.id === id)).filter(Boolean)
   const extras = layers.filter((row) => !LAYER_ORDER.includes(row.id))
   const visible = ordered.concat(extras)
+  const layersProblem = unread || (hasReadProblems(data) && visible.length === 0)
+  const unmounted = Boolean((error && !data) || (data && data.read_status === 'unread'))
+  const detail = layersProblem && !unmounted ? formatErrors(data) : ''
+  const summary = data && !layersProblem ? data.summary : null
 
-  if (isLoading) {
+  if (embedUrl) {
     return jsxs('div', {
-      className: 'flex h-full flex-col items-center justify-center gap-3',
+      className: 'flex h-full min-h-0 flex-col bg-(--ui-bg)',
       children: [
-        jsx(GlyphSpinner, { size: 24 }),
-        jsx('div', { className: 'text-sm text-(--ui-text-secondary)', children: 'Loading Overwatch layers…' }),
-      ],
-    })
-  }
-
-  if (unread || (hasReadProblems(data) && visible.length === 0)) {
-    const unmounted = Boolean(error && !data) || (data && data.read_status === 'unread')
-    return jsx('div', {
-      className: 'flex h-full min-h-0 flex-col',
-      children: jsx(ScrollArea, {
-        className: 'min-h-0 flex-1',
-        children: jsxs('div', {
-          className: 'flex flex-col gap-3 py-4',
-          children: [
-            jsx('div', {
-              className: 'px-4',
-              children: jsx(ErrorState, {
-                title: unmounted ? 'Backend not reachable' : 'Could not load Overwatch layers',
-                description: unmounted ? UNMOUNTED_COPY : formatErrors(data),
-              }),
-            }),
-            jsx(Actions, { hud, checking: checkingHud, onRetry: retryAll }),
-          ],
+        jsx(EmbedChrome, {
+          embedUrl,
+          summary,
+          layersProblem,
+          unmounted,
+          detail,
+          isFetching,
+          canToggleLayers: visible.length > 0,
+          onRefresh: refreshLayers,
+          onRetry: retryAll,
         }),
-      }),
+        layersOpen && visible.length
+          ? jsx(LayersStrip, { visible })
+          : null,
+        jsx(HudFrame, { url: embedUrl }),
+      ],
     })
   }
 
   return jsxs('div', {
     className: 'flex h-full min-h-0 flex-col gap-3',
     children: [
-      jsx(HudHeader, {
-        data,
-        hud,
-        isFetching,
-        onRefresh: () => {
-          fetchLayers(ctx, true)
-            .then((fresh) => {
-              queryClient.setQueryData([ID, 'layers'], fresh)
-            })
-            .catch(() => {
-              void refetch()
-            })
-        },
-      }),
-      jsx(Actions, { hud, checking: checkingHud }),
-      jsx(CasesTip, { hud }),
-      jsx(Separator, {}),
-      visible.length === 0
-        ? jsx('div', {
-            className: 'flex flex-1 items-center justify-center p-6',
-            children: jsx(EmptyState, {
-              title: 'No layer rows',
-              description: 'The backend returned zero layers. That is empty, not an invented briefing.',
-            }),
+      layersProblem
+        ? jsxs('div', {
+            className: 'flex flex-col gap-2 px-4 pt-4',
+            children: [
+              jsxs('div', {
+                className: 'flex items-center gap-2',
+                children: [
+                  jsx(Codicon, { name: 'globe', size: 16 }),
+                  jsx('div', {
+                    className: 'min-w-0 flex-1 truncate text-sm font-medium tracking-[0.12em]',
+                    style: { color: HUD.cyan },
+                    children: 'OVERWATCH',
+                  }),
+                  jsx(BackendBadge, { unmounted, detail }),
+                ],
+              }),
+              checkingHud
+                ? null
+                : jsx('div', {
+                    className: 'text-[0.6875rem] leading-relaxed text-(--ui-text-tertiary)',
+                    children: unmounted ? UNMOUNTED_COPY : detail,
+                  }),
+            ],
           })
-        : jsx(ScrollArea, {
-            className: 'min-h-0 flex-1',
-            children: jsx('div', {
-              className: 'flex flex-col gap-2 px-4 pb-6',
-              children: visible.map((layer) => jsx(LayerRow, { layer }, layer.id)),
+        : data
+          ? jsx(HudHeader, { data, hud, isFetching, onRefresh: refreshLayers })
+          : jsxs('div', {
+              className: 'flex items-center gap-2 px-4 pt-4',
+              children: [
+                jsx(Codicon, { name: 'globe', size: 16 }),
+                jsx('div', {
+                  className: 'text-sm font-medium tracking-[0.12em]',
+                  style: { color: HUD.cyan },
+                  children: 'OVERWATCH',
+                }),
+              ],
             }),
-          }),
+      jsx(Actions, { hud, checking: checkingHud, onRetry: retryAll }),
+      !layersProblem && data ? jsx(CasesTip, { hud }) : null,
+      !layersProblem && data ? jsx(Separator, {}) : null,
+      checkingHud
+        ? jsx(CheckingHud, {
+            label: 'Checking whether :4173 or :5173 is the Overwatch HUD…',
+          })
+        : isLoading && !data
+          ? jsx(CheckingHud, { label: 'Layer status is still loading. The HUD was not identified.' })
+          : layersProblem
+          ? null
+          : visible.length === 0
+            ? jsx('div', {
+                className: 'flex flex-1 items-center justify-center p-6',
+                children: jsx(EmptyState, {
+                  title: 'No layer rows',
+                  description: 'The backend returned zero layers. That is empty, not an invented briefing.',
+                }),
+              })
+            : jsx(ScrollArea, {
+                className: 'min-h-0 flex-1',
+                children: jsx('div', {
+                  className: 'flex flex-col gap-2 px-4 pb-6',
+                  children: visible.map((layer) => jsx(LayerRow, { layer }, layer.id)),
+                }),
+              }),
     ],
   })
 }
@@ -661,7 +877,7 @@ export default {
         title: 'Overwatch',
         data: {
           placement: 'right',
-          width: '400px',
+          width: '760px',
           dock: { pane: 'workspace', pos: 'right' },
         },
         render: () => jsx(OverwatchPane, { ctx }),

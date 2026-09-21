@@ -1,5 +1,5 @@
 name: smf-overwatch-pane
 version: "1.0"
-description: Hermes Desktop pane — Omarchy Overwatch live-layer status next to chat.
+description: Hermes Desktop pane — iframe the Overwatch HUD next to chat, with optional live-layer status.
 author: SMF Works
 kind: standalone
