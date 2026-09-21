@@ -6,11 +6,11 @@ For Hermes/OpenClaw installing this repo on a user's machine.
 
 1. Clone to `$HOME/.hermes/plugins/smf-overwatch-pane` (or `hermes plugins install smfworks/smf-overwatch-pane --enable`).
 2. Run `bash install.sh` from that tree. It enables the plugin on `$HOME/.hermes` **and** every `profiles/*/plugins` home, then copies `desktop/plugin.js` to `$HOME/.hermes/desktop-plugins/smf-overwatch-pane/`.
-3. Tell the user to **quit Hermes Desktop and relaunch from the menu**. The Python API (`plugin_api.py`) mounts only on the next `hermes serve`.
+3. Tell the user the HUD iframe works as soon as desktop JS reloads, when `:4173` or verified `:5173` titles as **Overwatch OSINT**. Quit Hermes Desktop and relaunch from the menu only so `plugin_api.py` mounts and `/layers` can fill the secondary strip. For a named profile, that Python file is the one under `HERMES_HOME/profiles/<name>/plugins/smf-overwatch-pane` (for example `~/.hermes/profiles/james/plugins`). The iframe does not read that directory.
 
 ## Do not
 
-- Do not treat ⌘K → Reload desktop plugins as a backend remount. That is JS only. **Backend not reachable** means the serve process predates enable — the pane cannot invent layer points to fill the gap. That screen must still offer GitHub, Retry, and Open Overwatch HUD when a loopback page identifies as Overwatch. Do not leave a dead pane with no exit.
+- Do not treat ⌘K → Reload desktop plugins as a backend remount. That is JS only. **Backend not reachable** means `/layers` is unread. Show that as a small badge on the HUD iframe. Do not replace the iframe with a full-pane error, and do not invent layer points to fill the gap. When the HUD is not identified, still offer GitHub, Retry, and the identity note.
 - Do not run `hermes desktop` to relaunch if a packaged Electron binary already exists (`…/linux-unpacked/Hermes --no-sandbox`). `hermes desktop` rewrites the `.desktop` `Exec=` and can prompt for `chrome-sandbox` sudo.
 - Do not `hermes serve --stop` (kills every serve on the box). Do not kill this chat's backend from inside the same Desktop window unless the user asked for a relaunch.
 - Do not invent earthquakes, events, aircraft, alerts, vessels, or fires. A failed refresh must serve disk cache with `status: stale` / age, or `status: err` + empty `sample` if there is no cache. Empty successful reads stay `live` with `count: 0`.
@@ -20,4 +20,4 @@ For Hermes/OpenClaw installing this repo on a user's machine.
 
 ## After relaunch
 
-Sidebar **Overwatch**, the right-of-chat pane, or ⌘K → Open Overwatch pane. This column is the **status pane**, not the Overwatch HUD webapp and not AIGC Studio (`:5174`). ⌘K → Open Overwatch HUD opens preview `http://127.0.0.1:4173/` when that page identifies as Overwatch OSINT, otherwise dev `http://127.0.0.1:5173/` only with the same identity. Optional status-bar chip shows ERR/STALE counts only when those statuses are present — never a guessed number.
+Sidebar **Overwatch**, the right-of-chat pane, or ⌘K → Open Overwatch pane. When the HUD title matches, that column **is** the Overwatch HUD in an iframe (AIGC Studio’s local-URL pattern). It is not AIGC Studio (`:5174`) and it is not the pack builder. ⌘K → Open Overwatch HUD opens preview `http://127.0.0.1:4173/` when that page identifies as Overwatch OSINT, otherwise dev `http://127.0.0.1:5173/` only with the same identity. Optional status-bar chip shows ERR/STALE counts only when `/layers` actually returned those statuses — never a guessed number.

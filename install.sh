@@ -75,7 +75,10 @@ cp -f "$src" "$APP_HOME/desktop-plugins/$NAME/plugin.js"
 echo "==> copied JS -> $APP_HOME/desktop-plugins/$NAME/plugin.js"
 
 echo
-echo "DONE. The Python API is not live in this Desktop process."
-echo "Quit Hermes Desktop and launch it again from the menu / packaged Electron --no-sandbox."
-echo "Do not run: hermes desktop"
+echo "DONE. The HUD iframe does not need plugin_api.py."
+echo "It embeds :4173, or :5173 only when the HTML title is Overwatch OSINT."
+echo "Python /layers mounts on the next hermes serve for each profile whose"
+echo "HERMES_HOME/profiles/<name>/plugins contains smf-overwatch-pane."
+echo "Quit Hermes Desktop and launch it again from the menu / packaged Electron --no-sandbox"
+echo "if you want that layer strip. Do not run: hermes desktop"
 echo "Then: Ctrl+K → Open Overwatch pane."
