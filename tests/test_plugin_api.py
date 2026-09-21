@@ -275,6 +275,9 @@ def test_collect_layers_parses_fixtures_without_inventing(tmp_path: Path):
     assert payload["hud"]["preview_url"] == "http://127.0.0.1:4173/"
     assert payload["hud"]["dev_url"] == "http://127.0.0.1:5173/"
     assert payload["hud"]["github_url"] == api.GITHUB_URL
+    assert payload["hud"]["identified"] is None
+    assert payload["hud"]["reachable"] is None
+    assert payload["hud"]["aigc_studio_url"] == "http://127.0.0.1:5174/"
 
 
 def test_ais_is_off_even_when_getter_could_return_vessels(tmp_path: Path):
@@ -465,13 +468,48 @@ def test_partial_failure_keeps_other_layers_live(tmp_path: Path):
     assert payload["summary"]["err"] == 1
 
 
+OVERWATCH_HTML = (
+    "<!doctype html><html><head><title>Overwatch OSINT for Omarchy</title>"
+    '<meta name="description" content="Overwatch OSINT for Omarchy — a configurable OSINT workbench.">'
+    "</head><body><div id=\"root\"></div></body></html>"
+)
+PACK_BUILDER_HTML = (
+    "<!doctype html><html><head>"
+    "<title>AIGC Production Flow Pack Builder · SMF Works</title>"
+    "</head><body>vite</body></html>"
+)
+STUDIO_HTML = (
+    "<!doctype html><html><head><title>AIGC Studio Spine</title></head><body></body></html>"
+)
+
+
+def test_html_identifies_overwatch_title_not_other_vite():
+    assert api.html_identifies_as_overwatch(OVERWATCH_HTML)
+    assert api.html_identifies_as_overwatch(
+        "<html><head><title>  OVERWATCH   OSINT  </title></head></html>"
+    )
+    assert not api.html_identifies_as_overwatch(PACK_BUILDER_HTML)
+    assert not api.html_identifies_as_overwatch(STUDIO_HTML)
+    assert not api.html_identifies_as_overwatch("<html><title>sparkDash</title><body>overwatch</body></html>")
+    assert not api.html_identifies_as_overwatch("<html>hud</html>")
+    assert not api.html_identifies_as_overwatch("")
+    # Title wins: a pack-builder title is not Overwatch even if the body mentions it.
+    assert not api.html_identifies_as_overwatch(
+        "<html><head><title>AIGC Production Flow Pack Builder</title>"
+        '<meta name="description" content="Overwatch OSINT"></head></html>'
+    )
+    assert api.html_identifies_as_overwatch(
+        '<html><head><meta name="description" content="Overwatch OSINT for Omarchy"></head></html>'
+    )
+
+
 def test_hud_probe_only_hits_known_ports(tmp_path: Path):
     seen = []
 
     def getter(url, headers=None):
         seen.append(url)
         if url == api.HUD_PREVIEW_URL:
-            return 200, "<html>hud</html>", {}
+            return 200, OVERWATCH_HTML, {}
         if url in _all_empty_map():
             return _getter_from_map(_all_empty_map())(url, headers)
         raise OSError(f"unexpected url {url}")
@@ -484,7 +522,10 @@ def test_hud_probe_only_hits_known_ports(tmp_path: Path):
         probe=True,
     )
     assert payload["hud"]["reachable"] is True
+    assert payload["hud"]["identified"] is True
     assert payload["hud"]["reachable_url"] == api.HUD_PREVIEW_URL
+    assert payload["hud"]["aigc_studio_url"] == api.AIGC_STUDIO_URL
+    assert "status pane" in payload["hud"]["note"]
     allowed_hosts = {
         "earthquake.usgs.gov",
         "eonet.gsfc.nasa.gov",
@@ -517,8 +558,104 @@ def test_hud_probe_down_is_honest(tmp_path: Path):
         probe=True,
     )
     assert payload["hud"]["reachable"] is False
+    assert payload["hud"]["identified"] is False
     assert payload["hud"]["reachable_url"] is None
     assert payload["ok"] is True
+
+
+def test_hud_probe_rejects_pack_builder_on_5173(tmp_path: Path):
+    seen = []
+
+    def getter(url, headers=None):
+        seen.append(url)
+        if url == api.HUD_PREVIEW_URL:
+            raise OSError("connection refused")
+        if url == api.HUD_DEV_URL:
+            return 200, PACK_BUILDER_HTML, {}
+        if url == api.AIGC_STUDIO_URL:
+            raise AssertionError("AIGC Studio :5174 must not be probed")
+        if url in _all_empty_map():
+            return _getter_from_map(_all_empty_map())(url, headers)
+        raise OSError(f"unexpected url {url}")
+
+    payload = api.collect_layers(
+        getter=getter,
+        root=tmp_path,
+        now=NOW,
+        refresh=True,
+        probe=True,
+    )
+    assert payload["hud"]["reachable"] is False
+    assert payload["hud"]["identified"] is False
+    assert payload["hud"]["reachable_url"] is None
+    assert api.HUD_DEV_URL in seen
+    assert api.AIGC_STUDIO_URL not in seen
+
+
+def test_hud_probe_skips_wrong_4173_and_accepts_overwatch_5173(tmp_path: Path):
+    def getter(url, headers=None):
+        if url == api.HUD_PREVIEW_URL:
+            return 200, PACK_BUILDER_HTML, {}
+        if url == api.HUD_DEV_URL:
+            return 200, OVERWATCH_HTML, {}
+        if url in _all_empty_map():
+            return _getter_from_map(_all_empty_map())(url, headers)
+        raise OSError(f"unexpected url {url}")
+
+    payload = api.collect_layers(
+        getter=getter,
+        root=tmp_path,
+        now=NOW,
+        refresh=True,
+        probe=True,
+    )
+    assert payload["hud"]["reachable"] is True
+    assert payload["hud"]["identified"] is True
+    assert payload["hud"]["reachable_url"] == api.HUD_DEV_URL
+
+
+def test_hud_probe_prefers_identified_4173_over_5173(tmp_path: Path):
+    seen = []
+
+    def getter(url, headers=None):
+        seen.append(url)
+        if url == api.HUD_PREVIEW_URL:
+            return 200, OVERWATCH_HTML, {}
+        if url == api.HUD_DEV_URL:
+            return 200, OVERWATCH_HTML, {}
+        if url in _all_empty_map():
+            return _getter_from_map(_all_empty_map())(url, headers)
+        raise OSError(f"unexpected url {url}")
+
+    payload = api.collect_layers(
+        getter=getter,
+        root=tmp_path,
+        now=NOW,
+        refresh=True,
+        probe=True,
+    )
+    assert payload["hud"]["reachable_url"] == api.HUD_PREVIEW_URL
+    assert api.HUD_DEV_URL not in seen
+
+
+def test_hud_probe_studio_title_on_either_port_is_not_the_hud(tmp_path: Path):
+    def getter(url, headers=None):
+        if url in (api.HUD_PREVIEW_URL, api.HUD_DEV_URL):
+            return 200, STUDIO_HTML, {}
+        if url in _all_empty_map():
+            return _getter_from_map(_all_empty_map())(url, headers)
+        raise OSError(f"unexpected url {url}")
+
+    payload = api.collect_layers(
+        getter=getter,
+        root=tmp_path,
+        now=NOW,
+        refresh=True,
+        probe=True,
+    )
+    assert payload["hud"]["reachable"] is False
+    assert payload["hud"]["reachable_url"] is None
+    assert payload["layers"]
 
 
 def test_layer_defs_cover_requested_feeds():
@@ -544,10 +681,18 @@ def test_desktop_plugin_registers_palette_and_right_pane():
     js = (ROOT / "desktop" / "plugin.js").read_text(encoding="utf-8")
     assert "PANES_AREA" in js
     assert "placement: 'right'" in js
-    assert "Open Overwatch" in js
+    assert "Open Overwatch HUD" in js
     assert "Open Overwatch pane" in js
     assert "http://127.0.0.1:4173/" in js
     assert "http://127.0.0.1:5173/" in js
+    assert "http://127.0.0.1:5174/" in js
+    assert "AIGC Studio" in js
+    assert "overwatch osint" in js
+    assert "Backend not reachable" in js
+    assert "Quit Hermes Desktop" in js
+    assert "Reload desktop plugins" in js
+    assert "reachableUrl || preview" not in js
+    assert "identified" in js
     assert "omarchy-overwatch.cases.v1" in js
     yaml = (ROOT / "plugin.yaml").read_text(encoding="utf-8")
     assert "name: smf-overwatch-pane" in yaml

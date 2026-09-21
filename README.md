@@ -7,9 +7,9 @@ Public OSINT only. No scanning, no credential stuffing, no case-note sync.
 ## What it does
 
 - **Right pane** — Overwatch, docked to the right of the workspace (`400px`)
-- **Sidebar + palette** — Overwatch, plus ⌘K → **Open Overwatch pane**. ⌘K → **Open Overwatch** launches the HUD at `http://127.0.0.1:4173/`
+- **Sidebar + palette** — Overwatch, plus ⌘K → **Open Overwatch pane**. ⌘K → **Open Overwatch HUD** opens the HUD only after the page title identifies as Overwatch OSINT (`http://127.0.0.1:4173/` preferred, then `http://127.0.0.1:5173/`)
 - **Layer status** — USGS, EONET, ADS-B, NWS, AIS, FIRMS as **LIVE** / **STALE** / **ERR** / **OFF**, with sampled counts and source labels when the public endpoint actually returned them
-- **Open Overwatch HUD** — `http://127.0.0.1:4173/` (Vite preview). Dev server is `http://127.0.0.1:5173`
+- **Open Overwatch HUD** — preview `http://127.0.0.1:4173/`, or dev `http://127.0.0.1:5173/`, only when that response’s HTML title contains **Overwatch OSINT**. Another Vite app on those ports is not opened as the HUD. **AIGC Studio** is a different app at `http://127.0.0.1:5174/`
 - **GitHub** — link to the Overwatch app repo
 - **Cases tip** — investigation notes live in the HUD browser `localStorage` key `omarchy-overwatch.cases.v1`. This pane does not read or sync them into Hermes
 - **Status bar** — optional chip when any layer is ERR or STALE
@@ -33,7 +33,7 @@ bash "${HERMES_HOME:-$HOME/.hermes}/plugins/smf-overwatch-pane/install.sh"
 
 `install.sh` enables the plugin on `$HOME/.hermes` **and** every `profiles/*/plugins` home Desktop may spawn, copies `desktop/plugin.js` into `$HOME/.hermes/desktop-plugins/smf-overwatch-pane/` (what packaged Electron actually loads), and tells you to **quit and relaunch Desktop**.
 
-**⌘K → Reload desktop plugins is JS only.** It does not mount `plugin_api.py`. If Overwatch says **Backend not reachable**, the serve process started before enable — quit Desktop and launch it again.
+**⌘K → Reload desktop plugins is JS only.** It does not mount `plugin_api.py`. If the status pane says **Backend not reachable**, the serve process started before enable — quit Desktop and launch it again. That screen still offers **GitHub**, **Retry**, and **Open Overwatch HUD** when `:4173` or `:5173` identifies as Overwatch OSINT. It does not invent layer points to fill the gap.
 
 Do **not** run `hermes desktop` to relaunch if you already have the packaged Linux binary. That command rewrites the `.desktop` `Exec=` and can prompt for `chrome-sandbox` sudo. Use the menu entry / `…/linux-unpacked/Hermes --no-sandbox`.
 
@@ -57,7 +57,8 @@ Tell me to quit Hermes Desktop and relaunch from the menu so plugin_api.py mount
 
 - Watch layer chips. **LIVE** means the public endpoint responded recently. **STALE** is cached points after a failed refresh (age shown). **ERR** is a failed fetch with nothing cached. **OFF** is not fetched (AIS here).
 - **Refresh** forces a network pull per public layer. Failures keep the last cached sample on that row — they do not invent a replacement.
-- **Open Overwatch HUD** opens `http://127.0.0.1:4173/` (preview). If you are on `npm run dev`, use `http://127.0.0.1:5173`.
+- **Open Overwatch HUD** opens the verified HUD URL. Preview `:4173` wins when its HTML title is Overwatch OSINT. Dev `:5173` is used only when that page identifies as Overwatch — a pack builder or sparkDash on `:5173` is left alone. AIGC Studio (`http://127.0.0.1:5174/`) is a different app.
+- This column is the **status pane**. The globe lives in the Overwatch HUD webapp. Neither one is AIGC Studio.
 - Case notes stay in the HUD. Do not expect them in this pane.
 
 ## Architecture
@@ -80,7 +81,7 @@ smf-overwatch-pane/
 
 | Route | What it does |
 |-------|----------------|
-| `GET /layers` | Probe public feeds independently. Disk cache under the Hermes home (`cache/smf-overwatch-pane/`) with TTL. `?refresh=1` bypasses TTL. Per-layer failure → cached sample + `status: stale` + age, or `status: err` + empty sample. AIS is `off` (no public REST). |
+| `GET /layers` | Probe public feeds independently. Disk cache under the Hermes home (`cache/smf-overwatch-pane/`) with TTL. `?refresh=1` bypasses TTL. Per-layer failure → cached sample + `status: stale` + age, or `status: err` + empty sample. AIS is `off` (no public REST). HUD probe is `127.0.0.1:4173` then `:5173`, and `reachable_url` is set only when the HTML title identifies as Overwatch OSINT (`identified: true`). |
 | `GET /health` | `{ status: ok, plugin }` |
 
 Layers (implemented):
@@ -110,7 +111,7 @@ Normalized layer row:
 python3 -m pytest tests/ -q
 ```
 
-Network is not required. Parsers, status, cache, and HUD-probe allowlisting run against fixtures.
+Network is not required. Parsers, status, cache, HUD identity checks, and probe allowlisting run against fixtures.
 
 ## License
 
