@@ -12,6 +12,11 @@ Empty successful reads stay ``live`` with ``count: 0``.
 ``GET /layers`` query params:
 
 * ``refresh`` — ``1`` / ``true`` bypasses TTL and hits the network.
+
+The HUD probe checks ``127.0.0.1:4173`` then ``:5173`` and sets
+``reachable_url`` only when the HTML title identifies as Overwatch OSINT.
+Another Vite app on those ports (the AIGC pack builder, sparkDash) is not
+the HUD. AIGC Studio is a different app on ``:5174`` and is never probed.
 """
 from __future__ import annotations
 
@@ -52,8 +57,19 @@ OPENSKY_STRIDE = 18
 
 HUD_PREVIEW_URL = "http://127.0.0.1:4173/"
 HUD_DEV_URL = "http://127.0.0.1:5173/"
+AIGC_STUDIO_URL = "http://127.0.0.1:5174/"
 GITHUB_URL = "https://github.com/smfworks/omarchy-overwatch"
+# Distinctive product string from the Overwatch HUD <title>
+# ("Overwatch OSINT for Omarchy"). Not a generic "overwatch" substring.
+HUD_IDENTITY = "overwatch osint"
+HUD_NOTE = (
+    "This column is the Overwatch status pane in Hermes, not the Overwatch HUD "
+    "webapp and not AIGC Studio (http://127.0.0.1:5174/). Preview :4173 and dev "
+    ":5173 count as the HUD only when the HTML title identifies as Overwatch OSINT. "
+    "A pack builder on :5173 is not the HUD."
+)
 CASES_KEY = "omarchy-overwatch.cases.v1"
+_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 CASES_NOTE = (
     "Cases live in the Overwatch HUD browser localStorage key "
     "omarchy-overwatch.cases.v1. This pane does not read or sync them."
@@ -225,6 +241,23 @@ def hud_url_allowed(url: str) -> bool:
         return False
     port = parsed.port
     return port in {4173, 5173}
+
+
+def html_identifies_as_overwatch(body: str) -> bool:
+    """True when this document is the Overwatch HUD, not another local Vite app.
+
+    A present ``<title>`` decides: it must contain ``Overwatch OSINT``.
+    A title-less shell may match the same distinctive string in the head.
+    A pack-builder title does not match, even if the body mentions Overwatch.
+    """
+    text = body or ""
+    if not text.strip():
+        return False
+    match = _TITLE_RE.search(text)
+    if match is not None:
+        title = re.sub(r"\s+", " ", match.group(1)).strip().lower()
+        return HUD_IDENTITY in title
+    return HUD_IDENTITY in text[:8192].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -970,30 +1003,47 @@ def collect_layer(
         )
 
 
-def default_hud(*, reachable: Optional[bool] = None, reachable_url: Optional[str] = None) -> Dict[str, Any]:
+def default_hud(
+    *,
+    reachable: Optional[bool] = None,
+    reachable_url: Optional[str] = None,
+    identified: Optional[bool] = None,
+) -> Dict[str, Any]:
     return {
         "preview_url": HUD_PREVIEW_URL,
         "dev_url": HUD_DEV_URL,
+        "aigc_studio_url": AIGC_STUDIO_URL,
         "github_url": GITHUB_URL,
         "reachable": reachable,
         "reachable_url": reachable_url,
+        "identified": identified,
+        "note": HUD_NOTE,
         "cases_key": CASES_KEY,
         "cases_note": CASES_NOTE,
     }
 
 
 def probe_hud(getter: HttpGetter) -> Dict[str, Any]:
-    """Check the known Overwatch preview/dev ports only. No port scan."""
+    """Prefer :4173 when it is Overwatch. Use :5173 only with the same identity.
+
+    An answering port is not enough. The HTML title must identify as
+    Overwatch OSINT. The AIGC pack builder (often :5173, sometimes :4173)
+    and any other Vite app are left unmatched. AIGC Studio (:5174) is not probed.
+    """
     for url in (HUD_PREVIEW_URL, HUD_DEV_URL):
         if not hud_url_allowed(url):
             continue
         try:
-            status, _body, _ = getter(url, {"Accept": "text/html, */*"})
-            if 200 <= int(status) < 500:
-                return default_hud(reachable=True, reachable_url=url)
+            status, body, _headers = getter(url, {"Accept": "text/html, */*"})
         except Exception:
             continue
-    return default_hud(reachable=False, reachable_url=None)
+        code = int(status)
+        if code < 200 or code >= 400:
+            continue
+        page = body if isinstance(body, str) else ""
+        if html_identifies_as_overwatch(page):
+            return default_hud(reachable=True, reachable_url=url, identified=True)
+    return default_hud(reachable=False, reachable_url=None, identified=False)
 
 
 def collect_layers(

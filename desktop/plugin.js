@@ -32,8 +32,13 @@ const ROUTE = '/overwatch'
 const POLL_MS = 2 * 60 * 1000
 const HUD_PREVIEW = 'http://127.0.0.1:4173/'
 const HUD_DEV = 'http://127.0.0.1:5173/'
+const AIGC_STUDIO = 'http://127.0.0.1:5174/'
 const GITHUB_URL = 'https://github.com/smfworks/omarchy-overwatch'
 const CASES_KEY = 'omarchy-overwatch.cases.v1'
+/** HTML <title> must contain this product string (Overwatch OSINT). */
+const HUD_IDENTITY = 'overwatch osint'
+const UNMOUNTED_COPY =
+  'Quit Hermes Desktop and relaunch from the menu so plugin_api.py mounts and /layers can load. ⌘K → Reload desktop plugins is JavaScript only — it does not remount the Python API. No layer points were invented.'
 
 const HUD = {
   cyan: '#3ee0c8',
@@ -59,6 +64,8 @@ function emptyLayers() {
       github_url: GITHUB_URL,
       reachable: null,
       reachable_url: null,
+      identified: null,
+      aigc_studio_url: AIGC_STUDIO,
       cases_key: CASES_KEY,
       cases_note:
         'Cases live in the Overwatch HUD browser localStorage key omarchy-overwatch.cases.v1. This pane does not read or sync them.',
@@ -141,6 +148,65 @@ function statusLabel(status) {
   if (raw === 'stale') return 'STALE'
   if (raw === 'err') return 'ERR'
   return 'OFF'
+}
+
+function htmlIdentifiesAsOverwatch(html) {
+  const text = String(html || '')
+  const match = text.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
+  if (match) return match[1].replace(/\s+/g, ' ').toLowerCase().includes(HUD_IDENTITY)
+  return text.slice(0, 8192).toLowerCase().includes(HUD_IDENTITY)
+}
+
+async function fetchHtml(url) {
+  const ctrl = typeof AbortController === 'function' ? new AbortController() : null
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), 2000) : null
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      cache: 'no-store',
+      signal: ctrl ? ctrl.signal : undefined,
+      headers: { Accept: 'text/html, */*' },
+    })
+    if (!res || !res.ok) return ''
+    return await res.text()
+  } catch {
+    return ''
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+async function probeHudIdentity() {
+  for (const url of [HUD_PREVIEW, HUD_DEV]) {
+    const html = await fetchHtml(url)
+    if (html && htmlIdentifiesAsOverwatch(html)) return url
+  }
+  return null
+}
+
+function verifiedHudUrl(hud) {
+  if (!hud || hud.identified !== true) return null
+  const url = hud.reachable_url
+  if (url === HUD_PREVIEW || url === HUD_DEV) return url
+  return null
+}
+
+function resolveHud(apiHud, clientUrl, clientSettled) {
+  const base = apiHud && typeof apiHud === 'object' ? apiHud : emptyLayers().hud
+  const apiUrl = verifiedHudUrl(base)
+  if (apiUrl) {
+    return Object.assign({}, base, { reachable: true, reachable_url: apiUrl, identified: true })
+  }
+  if (base.identified === false) {
+    return Object.assign({}, base, { reachable: false, reachable_url: null })
+  }
+  if (clientUrl === HUD_PREVIEW || clientUrl === HUD_DEV) {
+    return Object.assign({}, base, { reachable: true, reachable_url: clientUrl, identified: true })
+  }
+  if (clientSettled) {
+    return Object.assign({}, base, { reachable: false, reachable_url: null, identified: false })
+  }
+  return Object.assign({}, base, { reachable: null, reachable_url: null })
 }
 
 function openExternal(url) {
@@ -294,10 +360,10 @@ function LayerRow({ layer }) {
   })
 }
 
-function HudHeader({ data, isFetching, onRefresh }) {
-  const hud = (data && data.hud) || emptyLayers().hud
+function HudHeader({ data, hud, isFetching, onRefresh }) {
+  const resolved = hud || (data && data.hud) || emptyLayers().hud
   const summary = (data && data.summary) || emptyLayers().summary
-  const reachable = hud.reachable
+  const reachable = resolved.reachable
   return jsxs('div', {
     className: 'flex flex-col gap-2 px-4 pt-4',
     children: [
@@ -332,7 +398,7 @@ function HudHeader({ data, isFetching, onRefresh }) {
       jsx('div', {
         className: 'text-[0.6875rem] leading-relaxed text-(--ui-text-tertiary)',
         children:
-          'Live public-feed status for the Omarchy Overwatch HUD. Complements the globe — it does not replace it, and it does not invent tracks.',
+          'Status pane for public Overwatch layers beside chat. It complements the Overwatch HUD webapp and does not replace the globe. It is not AIGC Studio. It does not invent tracks.',
       }),
       jsxs('div', {
         className: 'flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.6875rem] text-(--ui-text-tertiary)',
@@ -347,28 +413,40 @@ function HudHeader({ data, isFetching, onRefresh }) {
   })
 }
 
-function Actions({ hud }) {
-  const preview = (hud && hud.preview_url) || HUD_PREVIEW
+function DistinctionNote() {
+  return jsx('div', {
+    className: 'text-[0.6875rem] leading-relaxed text-(--ui-text-tertiary)',
+    children:
+      'This column is the status pane. The Overwatch HUD is a separate webapp — open it only when :4173 or :5173 returns a page titled Overwatch OSINT. AIGC Studio (' +
+      AIGC_STUDIO +
+      ') and the AIGC pack builder are different apps. A pack builder on :5173 is not the HUD.',
+  })
+}
+
+function Actions({ hud, checking, onRetry }) {
   const github = (hud && hud.github_url) || GITHUB_URL
-  const reachableUrl = hud && hud.reachable_url
+  const openUrl = verifiedHudUrl(hud)
+  const knownDown = Boolean(hud && hud.identified === false)
   return jsxs('div', {
     className: 'flex flex-col gap-2 px-4',
     children: [
       jsxs('div', {
         className: 'flex flex-wrap items-center gap-2',
         children: [
-          jsx(Button, {
-            variant: 'ghost',
-            size: 'sm',
-            onClick: () => {
-              haptic('tap')
-              openExternal(reachableUrl || preview)
-            },
-            children: jsxs('span', {
-              className: 'inline-flex items-center gap-1.5',
-              children: [jsx(Codicon, { name: 'link-external', size: 14 }), 'Open Overwatch HUD'],
-            }),
-          }),
+          openUrl
+            ? jsx(Button, {
+                variant: 'ghost',
+                size: 'sm',
+                onClick: () => {
+                  haptic('tap')
+                  openExternal(openUrl)
+                },
+                children: jsxs('span', {
+                  className: 'inline-flex items-center gap-1.5',
+                  children: [jsx(Codicon, { name: 'link-external', size: 14 }), 'Open Overwatch HUD'],
+                }),
+              })
+            : null,
           jsx(Button, {
             variant: 'ghost',
             size: 'sm',
@@ -381,12 +459,38 @@ function Actions({ hud }) {
               children: [jsx(Codicon, { name: 'github', size: 14 }), 'GitHub'],
             }),
           }),
+          onRetry
+            ? jsx(Button, {
+                variant: 'ghost',
+                size: 'sm',
+                onClick: () => {
+                  haptic('tap')
+                  onRetry()
+                },
+                children: 'Retry',
+              })
+            : null,
         ],
       }),
-      jsx('div', {
-        className: 'text-[0.6875rem] leading-relaxed text-(--ui-text-tertiary)',
-        children: `Preview ${preview} · Vite dev ${HUD_DEV}`,
-      }),
+      checking
+        ? jsx('div', {
+            className: 'text-[0.6875rem] text-(--ui-text-tertiary)',
+            children: 'Checking whether :4173 or :5173 is the Overwatch HUD…',
+          })
+        : null,
+      openUrl
+        ? jsx('div', {
+            className: 'text-[0.6875rem] leading-relaxed text-(--ui-text-tertiary)',
+            children: `Overwatch HUD ${openUrl}`,
+          })
+        : knownDown
+          ? jsx('div', {
+              className: 'text-[0.6875rem] leading-relaxed text-(--ui-text-tertiary)',
+              children:
+                'Overwatch HUD was not identified on :4173 or :5173. Those ports are opened only when the page title is Overwatch OSINT.',
+            })
+          : null,
+      jsx(DistinctionNote, {}),
     ],
   })
 }
@@ -410,12 +514,35 @@ function OverwatchPane({ ctx }) {
     staleTime: POLL_MS,
     retry: 1,
   })
+  const apiHud = data && data.hud
+  const apiChecked = Boolean(apiHud && typeof apiHud.identified === 'boolean')
+  const needsClientProbe = !isLoading && !apiChecked
+  const clientProbe = useQuery({
+    queryKey: [ID, 'hud-identity'],
+    queryFn: async () => ({ url: (await probeHudIdentity()) || '' }),
+    enabled: needsClientProbe,
+    staleTime: 30 * 1000,
+    retry: 0,
+  })
+  const clientPayload =
+    clientProbe.data && typeof clientProbe.data.url === 'string' ? clientProbe.data : null
+  const clientUrl = clientPayload && clientPayload.url ? clientPayload.url : null
+  const checkingHud = Boolean(
+    needsClientProbe &&
+      !clientPayload &&
+      (clientProbe.isFetching || clientProbe.isLoading)
+  )
+  const clientSettled = Boolean(needsClientProbe && clientPayload && !clientProbe.isFetching)
+  const hud = resolveHud(apiHud, clientUrl, clientSettled)
+  const retryAll = () => {
+    void refetch()
+    if (typeof clientProbe.refetch === 'function') void clientProbe.refetch()
+  }
   const layers = asLayers(data)
   const unread = Boolean(error && !data) || isUnread(data)
   const ordered = LAYER_ORDER.map((id) => layers.find((row) => row.id === id)).filter(Boolean)
   const extras = layers.filter((row) => !LAYER_ORDER.includes(row.id))
   const visible = ordered.concat(extras)
-  const hud = (data && data.hud) || emptyLayers().hud
 
   if (isLoading) {
     return jsxs('div', {
@@ -428,18 +555,25 @@ function OverwatchPane({ ctx }) {
   }
 
   if (unread || (hasReadProblems(data) && visible.length === 0)) {
-    return jsxs('div', {
-      className: 'flex h-full flex-col items-center justify-center gap-3 p-8',
-      children: [
-        jsx(ErrorState, {
-          title: error && !data ? 'Backend not reachable' : 'Could not load Overwatch layers',
-          description:
-            error && !data
-              ? 'Enable Overwatch in Settings → Plugins, then quit Hermes Desktop and relaunch from the menu. Reload desktop plugins is JS only. No layer points were invented.'
-              : formatErrors(data),
+    const unmounted = Boolean(error && !data) || (data && data.read_status === 'unread')
+    return jsx('div', {
+      className: 'flex h-full min-h-0 flex-col',
+      children: jsx(ScrollArea, {
+        className: 'min-h-0 flex-1',
+        children: jsxs('div', {
+          className: 'flex flex-col gap-3 py-4',
+          children: [
+            jsx('div', {
+              className: 'px-4',
+              children: jsx(ErrorState, {
+                title: unmounted ? 'Backend not reachable' : 'Could not load Overwatch layers',
+                description: unmounted ? UNMOUNTED_COPY : formatErrors(data),
+              }),
+            }),
+            jsx(Actions, { hud, checking: checkingHud, onRetry: retryAll }),
+          ],
         }),
-        jsx(Button, { variant: 'ghost', size: 'sm', onClick: () => refetch(), children: 'Retry' }),
-      ],
+      }),
     })
   }
 
@@ -448,6 +582,7 @@ function OverwatchPane({ ctx }) {
     children: [
       jsx(HudHeader, {
         data,
+        hud,
         isFetching,
         onRefresh: () => {
           fetchLayers(ctx, true)
@@ -459,7 +594,7 @@ function OverwatchPane({ ctx }) {
             })
         },
       }),
-      jsx(Actions, { hud }),
+      jsx(Actions, { hud, checking: checkingHud }),
       jsx(CasesTip, { hud }),
       jsx(Separator, {}),
       visible.length === 0
@@ -547,9 +682,14 @@ export default {
         area: PALETTE_AREA,
         data: {
           id: `${ID}-open`,
-          label: 'Open Overwatch',
+          label: 'Open Overwatch HUD',
           keywords: ['overwatch', 'hud', 'omarchy', 'osint', 'globe'],
-          run: () => openExternal(HUD_PREVIEW),
+          run: () => {
+            probeHudIdentity().then((url) => {
+              if (url) openExternal(url)
+              else host.navigate(ROUTE)
+            })
+          },
         },
       },
       {
