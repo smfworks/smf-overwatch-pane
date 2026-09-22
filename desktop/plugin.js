@@ -872,6 +872,9 @@ export default {
   register(ctx) {
     ctx.registerMany([
       {
+        // Sole layout pane. Do not add a second PANES_AREA entry — an empty
+        // placement:'floating' keep still draws a titled card over the HUD.
+        // Close on this pane disables the plugin (Hermes sole-pane rule).
         id: 'pane',
         area: PANES_AREA,
         title: 'Overwatch',

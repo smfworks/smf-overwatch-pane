@@ -679,6 +679,11 @@ def test_cases_are_not_in_layer_payload(tmp_path: Path):
 
 def test_desktop_plugin_registers_palette_and_right_pane():
     js = (ROOT / "desktop" / "plugin.js").read_text(encoding="utf-8")
+    register = js.split("register(ctx)", 1)[1]
+    assert register.count("area: PANES_AREA") == 1
+    assert "id: 'keep'" not in js
+    assert "placement: 'floating'" not in js
+    assert "Second pane so Close" not in js
     assert "PANES_AREA" in js
     assert "placement: 'right'" in js
     assert "width: '760px'" in js
